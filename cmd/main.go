@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go_tutorials/internal/config"
 	"go_tutorials/internal/database"
@@ -43,6 +46,44 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func seedDatabase(dbPool *pgxpool.Pool) {
+	ctx := context.Background()
+
+	// Seed 16 initial artworks from seed_data folder if they don't exist
+	for i := 1; i <= 16; i++ {
+		filename := fmt.Sprintf("p%d.png", i)
+		filePath := filepath.Join("seed_data", filename)
+
+		// Check if file exists on disk
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			continue // Skip if not found
+		}
+
+		// Check if already in DB to prevent duplicates
+		var exists bool
+		err := dbPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM art WHERE filename = $1)`, filename).Scan(&exists)
+		if err != nil || exists {
+			continue // Skip if error or already exists
+		}
+
+		// Read file bytes
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			log.Printf("Failed to read seed file %s: %v", filename, err)
+			continue
+		}
+
+		// Insert into DB
+		mimeType := http.DetectContentType(data)
+		_, err = dbPool.Exec(ctx, `INSERT INTO art (filename, mime_type, image_data) VALUES ($1, $2, $3)`, filename, mimeType, data)
+		if err != nil {
+			log.Printf("Failed to insert seed file %s: %v", filename, err)
+		} else {
+			log.Printf("Seeded initial artwork: %s", filename)
+		}
+	}
+}
+
 func main() {
 	appConfig := config.LoadConfig()
 
@@ -63,16 +104,20 @@ func main() {
 			submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS artworks (
+		CREATE TABLE IF NOT EXISTS art (
 			id SERIAL PRIMARY KEY,
-			filename TEXT NOT NULL,
-			filepath TEXT NOT NULL,
-			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+			filename VARCHAR(255) NOT NULL,
+			mime_type VARCHAR(100) NOT NULL,
+			image_data BYTEA NOT NULL,
+			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
 		log.Printf("Warning: Failed to auto-migrate tables: %v", err)
 	}
+
+	// Run Database Seeder
+	seedDatabase(dbPool)
 
 	// ── Repositories ──────────────────────────────────────────────────────────
 	artRepo := repository.NewArtRepository(dbPool)
@@ -86,11 +131,11 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 
-	// Serve uploaded artwork files statically
-	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
-
 	// ── Public routes ─────────────────────────────────────────────────────────
-	r.Get("/api/art", handlers.HandleArtGallery(artRepo))
+	r.Get("/api/art", handlers.HandleArtGallery(artRepo)) // old route
+	r.Get("/api/art/image/{id}", handlers.GetArtworkImage(artworkRepo)) // serves image bytes
+	r.Get("/api/admin/art", handlers.GetAdminArtworks(artworkRepo)) // fetching metadata (used by public gallery too)
+	
 	r.Get("/api/commissions", handlers.HandleCommissions(commRepo))
 	r.Post("/api/enquiry", handlers.HandleSubmitEnquiry(enqRepo))
 
@@ -109,7 +154,6 @@ func main() {
 		p.Delete("/api/admin/enquiries/{id}", handlers.HandleDeleteEnquiry(enqRepo))
 
 		// Artworks (upload management)
-		p.Get("/api/admin/art", handlers.GetAdminArtworks(artworkRepo))
 		p.Post("/api/admin/art", handlers.UploadArtwork(artworkRepo))
 		p.Delete("/api/admin/art/{id}", handlers.DeleteAdminArtwork(artworkRepo))
 

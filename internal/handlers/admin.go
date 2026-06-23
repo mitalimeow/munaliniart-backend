@@ -40,8 +40,8 @@ func AdminLogin(appCfg *config.Config) http.HandlerFunc {
 			Path:     "/",
 			Expires:  time.Now().Add(1 * time.Hour),
 			HttpOnly: true,
-			Secure:   false, // Set to true when deploying live over HTTPS
-			SameSite: http.SameSiteLaxMode,
+			Secure:   true,
+			SameSite: http.SameSiteNoneMode,
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -78,7 +78,8 @@ func AdminLogout() http.HandlerFunc {
 			Path:     "/",
 			Expires:  time.Unix(0, 0),
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+			Secure:   true,
+			SameSite: http.SameSiteNoneMode,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "Logged out"})

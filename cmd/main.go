@@ -137,6 +137,10 @@ func main() {
 	r.Use(corsMiddleware)
 
 	// ── Public routes ─────────────────────────────────────────────────────────
+	r.Get("/api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("pong"))
+	})
 	r.Get("/api/art", handlers.HandleArtGallery(artRepo))
 	r.Get("/api/art/image/{id}", handlers.GetArtworkImage(artworkRepo))
 	r.Get("/api/admin/art", handlers.GetAdminArtworks(artworkRepo)) // also used by public gallery

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -52,6 +53,21 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer dbPool.Close()
+
+	// ── Auto-migrate Database Tables ────────────────────────────────
+	_, err = dbPool.Exec(context.Background(), `
+		CREATE TABLE IF NOT EXISTS enquiries (
+			id SERIAL PRIMARY KEY,
+			sender_name VARCHAR(100) NOT NULL,
+			sender_email VARCHAR(255) NOT NULL,
+			message TEXT NOT NULL,
+			is_read BOOLEAN DEFAULT FALSE,
+			submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to auto-create enquiries table: %v", err)
+	}
 
 	artRepo := repository.NewArtRepository(dbPool)
 	commRepo := repository.NewCommissionRepository(dbPool)

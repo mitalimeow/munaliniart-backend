@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,13 +16,26 @@ import (
 	"go_tutorials/internal/repository"
 )
 
-// corsMiddleware adds CORS headers for the frontend dev server
+// corsMiddleware adds CORS headers for the frontend dev server and production app
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		origin := r.Header.Get("Origin")
+		allowedOrigin := os.Getenv("FRONTEND_URL")
+		
+		// If frontend URL is set, only allow that one. Otherwise, allow localhost for dev.
+		if allowedOrigin != "" {
+			if origin == allowedOrigin {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+		} else {
+			// Fallback for local development
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

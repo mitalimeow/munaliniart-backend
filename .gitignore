@@ -1,0 +1,10 @@
+# Ignore environment secrets
+.env
+
+# Ignore compiled Windows binaries
+*.exe
+*.exe~
+go-jwt
+
+# Ignore test scratch files
+diag.go

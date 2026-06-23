@@ -25,7 +25,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		allowedOrigin := os.Getenv("FRONTEND_URL")
 
-		// If FRONTEND_URL is set, only allow that origin. Otherwise, allow localhost for dev.
 		if allowedOrigin != "" {
 			if origin == allowedOrigin {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -49,31 +48,26 @@ func corsMiddleware(next http.Handler) http.Handler {
 func seedDatabase(dbPool *pgxpool.Pool) {
 	ctx := context.Background()
 
-	// Seed 16 initial artworks from seed_data folder if they don't exist
 	for i := 1; i <= 16; i++ {
 		filename := fmt.Sprintf("p%d.png", i)
 		filePath := filepath.Join("seed_data", filename)
 
-		// Check if file exists on disk
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			continue // Skip if not found
+			continue
 		}
 
-		// Check if already in DB to prevent duplicates
 		var exists bool
 		err := dbPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM art WHERE filename = $1)`, filename).Scan(&exists)
 		if err != nil || exists {
-			continue // Skip if error or already exists
+			continue
 		}
 
-		// Read file bytes
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			log.Printf("Failed to read seed file %s: %v", filename, err)
 			continue
 		}
 
-		// Insert into DB
 		mimeType := http.DetectContentType(data)
 		_, err = dbPool.Exec(ctx, `INSERT INTO art (filename, mime_type, image_data) VALUES ($1, $2, $3)`, filename, mimeType, data)
 		if err != nil {
@@ -111,6 +105,17 @@ func main() {
 			image_data BYTEA NOT NULL,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS commissions (
+			id SERIAL PRIMARY KEY,
+			customer_name VARCHAR(255) NOT NULL,
+			review TEXT NOT NULL,
+			price DECIMAL(10,2) NOT NULL,
+			image_filename VARCHAR(255) NOT NULL,
+			image_mime_type VARCHAR(100) NOT NULL,
+			image_data BYTEA NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		log.Printf("Warning: Failed to auto-migrate tables: %v", err)
@@ -132,11 +137,14 @@ func main() {
 	r.Use(corsMiddleware)
 
 	// ── Public routes ─────────────────────────────────────────────────────────
-	r.Get("/api/art", handlers.HandleArtGallery(artRepo)) // old route
-	r.Get("/api/art/image/{id}", handlers.GetArtworkImage(artworkRepo)) // serves image bytes
-	r.Get("/api/admin/art", handlers.GetAdminArtworks(artworkRepo)) // fetching metadata (used by public gallery too)
-	
-	r.Get("/api/commissions", handlers.HandleCommissions(commRepo))
+	r.Get("/api/art", handlers.HandleArtGallery(artRepo))
+	r.Get("/api/art/image/{id}", handlers.GetArtworkImage(artworkRepo))
+	r.Get("/api/admin/art", handlers.GetAdminArtworks(artworkRepo)) // also used by public gallery
+
+	// Commissions — public
+	r.Get("/api/commissions", handlers.GetCommissions(commRepo))
+	r.Get("/api/commissions/{id}/image", handlers.GetCommissionImage(commRepo))
+
 	r.Post("/api/enquiry", handlers.HandleSubmitEnquiry(enqRepo))
 
 	// ── Admin auth (rate-limited, public) ────────────────────────────────────
@@ -153,12 +161,14 @@ func main() {
 		p.Get("/api/admin/enquiries", handlers.HandleGetEnquiries(enqRepo))
 		p.Delete("/api/admin/enquiries/{id}", handlers.HandleDeleteEnquiry(enqRepo))
 
-		// Artworks (upload management)
+		// Artworks
 		p.Post("/api/admin/art", handlers.UploadArtwork(artworkRepo))
 		p.Delete("/api/admin/art/{id}", handlers.DeleteAdminArtwork(artworkRepo))
 
-		// Commissions (read-only admin view)
-		p.Get("/api/admin/commissions", handlers.HandleCommissions(commRepo))
+		// Commissions
+		p.Get("/api/admin/commissions", handlers.GetCommissions(commRepo))
+		p.Post("/api/admin/commissions", handlers.CreateCommission(commRepo))
+		p.Delete("/api/admin/commissions/{id}", handlers.DeleteCommission(commRepo))
 	})
 
 	log.Printf("Server online on port %s...", appConfig.ServerPort)

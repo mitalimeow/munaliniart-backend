@@ -7,13 +7,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type CommissionTier struct {
-	ID          int       `json:"id"`
-	TierName    string    `json:"tier_name"`
-	Price       float64   `json:"price"`
-	Description string    `json:"description"`
-	IsAvailable bool      `json:"is_available"`
-	UpdatedAt   time.Time `json:"updated_at"`
+// Commission represents a completed sold artwork with collector testimonial
+type Commission struct {
+	ID            int       `json:"id"`
+	CustomerName  string    `json:"customer_name"`
+	Review        string    `json:"review"`
+	Price         float64   `json:"price"`
+	ImageFilename string    `json:"image_filename"`
+	ImageMimeType string    `json:"image_mime_type,omitempty"`
+	ImageData     []byte    `json:"-"` // never serialize to JSON
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type CommissionRepository struct {
@@ -24,28 +27,47 @@ func NewCommissionRepository(db *pgxpool.Pool) *CommissionRepository {
 	return &CommissionRepository{DB: db}
 }
 
-func (r *CommissionRepository) GetTiers(ctx context.Context) ([]CommissionTier, error) {
-	query := `SELECT id, tier_name, price, description, is_available, updated_at FROM commissions ORDER BY price ASC`
+// GetAll returns all commissions (metadata only, no image bytes)
+func (r *CommissionRepository) GetAll(ctx context.Context) ([]Commission, error) {
+	query := `SELECT id, customer_name, review, price, image_filename, created_at
+	          FROM commissions ORDER BY created_at DESC`
 	rows, err := r.DB.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var tiers []CommissionTier
+	var commissions []Commission
 	for rows.Next() {
-		var tier CommissionTier
-		err := rows.Scan(&r.DB, &tier.TierName, &tier.Price, &tier.Description, &tier.IsAvailable, &tier.UpdatedAt)
-		if err != nil {
+		var c Commission
+		if err := rows.Scan(&c.ID, &c.CustomerName, &c.Review, &c.Price, &c.ImageFilename, &c.CreatedAt); err != nil {
 			return nil, err
 		}
-		tiers = append(tiers, tier)
+		commissions = append(commissions, c)
 	}
-	return tiers, nil
+	return commissions, nil
 }
 
-func (r *CommissionRepository) UpdateTier(ctx context.Context, id int, name string, price float64, desc string, avail bool) error {
-	query := `UPDATE commissions SET tier_name = $1, price = $2, description = $3, is_available = $4, updated_at = NOW() WHERE id = $5`
-	_, err := r.DB.Exec(ctx, query, name, price, desc, avail, id)
+// GetImage returns the raw image bytes and MIME type for a commission
+func (r *CommissionRepository) GetImage(ctx context.Context, id int) ([]byte, string, error) {
+	var data []byte
+	var mimeType string
+	query := `SELECT image_data, image_mime_type FROM commissions WHERE id = $1`
+	err := r.DB.QueryRow(ctx, query, id).Scan(&data, &mimeType)
+	return data, mimeType, err
+}
+
+// Create inserts a new commission record
+func (r *CommissionRepository) Create(ctx context.Context, customerName, review string, price float64, filename, mimeType string, data []byte) (int, error) {
+	var id int
+	query := `INSERT INTO commissions (customer_name, review, price, image_filename, image_mime_type, image_data)
+	          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	err := r.DB.QueryRow(ctx, query, customerName, review, price, filename, mimeType, data).Scan(&id)
+	return id, err
+}
+
+// Delete removes a commission record
+func (r *CommissionRepository) Delete(ctx context.Context, id int) error {
+	_, err := r.DB.Exec(ctx, `DELETE FROM commissions WHERE id = $1`, id)
 	return err
 }
